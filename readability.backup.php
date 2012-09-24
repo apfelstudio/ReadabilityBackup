@@ -1,57 +1,97 @@
 <?php
 
-die();
-header("Content-Type: text/plain");
+define('API_KEY',      "");
+define('API_SECRET',   "");
+define('CALLBACK_URL', "");
 
-include "mydata.php";
+function createNonce()
+{
+	return md5(time() . mt_rand());
+}
 
+	// start session
+session_start();
+
+// Initialize cURL
 $curl = curl_init();
 curl_setopt($curl, CURLOPT_RETURNTRANSFER, 1);
 curl_setopt($curl, CURLOPT_CONNECTTIMEOUT, 15);
 
-
-curl_setopt($curl, CURLOPT_URL, 
-	"https://www.readability.com/api/rest/v1/oauth/access_token" .
-	"?oauth_consumer_key=" . $data['consumerkey'] .
-	"&oauth_timestamp=" . time() . 
-	"&oauth_nonce=" . md5(time() . "salt").
-	"&x_auth_username=" . $data['username'] . 
-	"&x_auth_password=" . $data['userpwd'] . 
-	"&x_auth_mode=client_auth" .
-	"&oauth_signature=" . $data['oauth_signature'] .
-	"&oauth_signature_method=PLAINTEXT");
-$oauth_result = curl_exec($curl);
-parse_str($oauth_result, $tokens);
-
-curl_setopt($curl, CURLOPT_URL, 
-	"https://www.readability.com/api/rest/v1/bookmarks" .
-	"?oauth_token=" . $tokens["oauth_token"] .
-	"&oauth_consumer_key=" . $data['consumerkey'] . 
-	"&oauth_timestamp=" . time() . 
-	"&oauth_nonce=" . md5(time() . "salt").
-	"&oauth_signature=" . $data['oauth_signature'] . $tokens["oauth_token_secret"] .
-	"&oauth_signature_method=PLAINTEXT" . 
-	"&archive=1"
-);
-$json = json_decode(curl_exec($curl));
-
-foreach($json->bookmarks as $b)
+// Show Login Screen
+if(!isset($_SESSION['oauth_token']))
 {
-	$echo = $b->article->id . PHP_EOL
-	   . $b->article->title . PHP_EOL
-	   . $b->article->url . PHP_EOL
-	   . PHP_EOL;
+	// Request token and secret
+	curl_setopt($curl, CURLOPT_URL,
+		"https://www.readability.com/api/rest/v1/oauth/request_token" .
+		"?oauth_signature=" . API_SECRET . "%26" .
+		"&oauth_consumer_key=" . API_KEY .
+		"&oauth_timestamp=" . time() .
+		"&oauth_nonce=" . createNonce());
+	parse_str(curl_exec($curl), $tokens);
+	$_SESSION['oauth_token']        = $tokens['oauth_token'];
+	$_SESSION['oauth_token_secret'] = $tokens['oauth_token_secret'];
+	
+	// Create link to login to Readability
+	$loginLink = "https://www.readability.com/api/rest/v1/oauth/authorize" .
+	"?oauth_callback=" . CALLBACK_URL .
+	"&oauth_token=" . $tokens['oauth_token'];
+	
+	echo <<<HTMLOUTPUT
+<!DOCTYPE html>
+<html>
+<head>
+	<title>Apfelstudio Readability Backup</title>
+</head>
+<body>
+	<a href="$loginLink">Login to Readability</a>
+</body>
+</html>
+HTMLOUTPUT;
+	
 }
 
-curl_setopt($curl, CURLOPT_URL, 
-	"https://www.readability.com/api/rest/v1/articles/" . $json->bookmarks[3]->article->id .
-	"?oauth_token=" . $tokens["oauth_token"] .
-	"&oauth_consumer_key=" . $data['consumerkey'] . 
-	"&oauth_timestamp=" . time() . 
-	"&oauth_nonce=" . md5(time() . "salt").
-	"&oauth_signature=" . $data['oauth_signature'] . $tokens["oauth_token_secret"] .
-	"&oauth_signature_method=PLAINTEXT"
-);
-$json2 = json_decode(curl_exec($curl));
-
-var_dump($json2);
+// Logout
+elseif(isset($_GET['logout']))
+{
+	unset($_SESSION['oauth_token'], $_SESSION['oauth_token_secret']);
+}
+// Show Bookmark List
+else
+{	
+	header("Content-Type: text/plain");
+	
+	parse_str($_SERVER['QUERY_STRING'], $tokens);
+	$_SESSION['oauth_verifier'] = $tokens['oauth_verifier'];
+	
+	curl_setopt($curl, CURLOPT_URL, 
+		"https://www.readability.com/api/rest/v1/oauth/access_token" .
+		"?oauth_consumer_key=" . API_KEY .
+		"&oauth_timestamp=" . time() . 
+		"&oauth_verifier=" . $_SESSION['oauth_verifier'] .
+		"&oauth_token=" . $_SESSION['oauth_token'] .
+		"&oauth_token_secret=" . $_SESSION['oauth_token_secret'] .
+		"&oauth_nonce=" . createNonce() .
+		"&oauth_signature=" . API_SECRET . "%26" . $_SESSION['oauth_token_secret'] .
+		"&oauth_signature_method=PLAINTEXT");
+	parse_str(curl_exec($curl), $tokens);
+	
+	curl_setopt($curl, CURLOPT_URL, 
+		"https://www.readability.com/api/rest/v1/bookmarks" .
+		"?oauth_consumer_key=" . API_KEY .
+		"&oauth_timestamp=" . time() . 
+		"&oauth_token=" . $tokens['oauth_token'] .
+		"&oauth_nonce=" . createNonce() .
+		"&oauth_signature=" . API_SECRET . "%26" . $tokens["oauth_token_secret"] .
+		"&oauth_signature_method=PLAINTEXT" . 
+		"&archive=1");
+	$json = json_decode(curl_exec($curl));
+	
+	foreach($json->bookmarks as $b)
+	{
+		echo $b->article->id . PHP_EOL
+		. $b->article->title . PHP_EOL
+		. $b->article->url . PHP_EOL
+		. PHP_EOL;
+		
+	}
+}
